@@ -57,12 +57,19 @@ Luasool=(function()
 		net.Receive(LUASOOL_NET_OPENEDITOR,function() Luasool.openEditor() end)
 		net.Receive(LUASOOL_NET_RUNCODE,function() Luasool.runCodeOnServer() end)
 		net.Receive(LUASOOL_NET_ERROR,function() Luasool.printError(net.ReadString()) end)
-		--Receives client proxy requests from an actively-running luasool and executes it.
+		-- Receives client proxy requests from an actively-running luasool and executes it.
+		--  functionAddress refers to name of a globally-accessible function, by however
+		--  that variable is referenced from the global object.
+		-- By splitting the address by dot operator and indexing an object/table property
+		--  by each substring, the specified address can be of arbitrary depth as long as
+		--  it is globally-accessible.
 		net.Receive(LUASOOL_NET_CLIENT_PROXY_CALL,function()
 			local functionAddress=net.ReadString()
 			local arg=net.ReadTable()
 			local obj=_G
-			for part in string.gmatch(functionAddress,"([^.]+)")
+			-- For each substring between dot operators, we perform an operation
+			--  to index the next-deep property.
+			for part in string.gmatch(functionAddress,"([^\\.]+)")
 			do
 				obj=obj[part]
 				if not obj
