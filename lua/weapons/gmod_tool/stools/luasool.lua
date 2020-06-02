@@ -30,6 +30,7 @@ then
 	function TOOL:LeftClick(tr)
 		net.Start(LUASOOL_NET_RUNCODE)
 		net.Send(self:GetOwner())
+		return true
 	end
 	function TOOL:RightClick(tr)
 		net.Start(LUASOOL_NET_OPENEDITOR)
