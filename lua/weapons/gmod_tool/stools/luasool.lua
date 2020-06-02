@@ -6,7 +6,7 @@ if CLIENT
 then
 	language.Add("Tool.luasool.name","Luasool")
 	language.Add("Tool.luasool.desc","Right-click to open LUA editor.")
-	language.Add("Tool.luasool.0","Left-click to run current script.")
+	language.Add("Tool.luasool.0","Left-click to run current script on server. Shift+Left-Click to run current script on client.")
 	function TOOL:LeftClick() return true end
 	function TOOL.BuildCPanel(panel)
 		local currentDirectory

@@ -1,6 +1,5 @@
 LUASOOL_NET_OPENEDITOR="luasool_openeditor"
 LUASOOL_NET_RUNCODE="luasool_runcode"
-LUASOOL_NET_ERROR="luasool_error"
 LUASOOL_NET_CLIENT_PROXY_CALL="lua_client_proxy_call"
 LUASOOL_FILE_SCRIPT_DIR="luasool"
 LUASOOL_ERROR_SERVER_MAX_PRINT_LENGTH=200
@@ -8,6 +7,59 @@ LUASOOL_ERROR_CLIENT_MAX_HINT_LENGTH=100
 
 Luasool=(function()
 	local Luasool={}
+
+	-- Generates a table of variables that executed luasools should have acccess to.
+	function Luasool.generateInjectables(ply)
+		local plyTrace=ply:GetEyeTrace()
+		return {
+			trace=plyTrace,
+			player=ply,
+			this=plyTrace.Entity,
+			print=SERVER and Luasool.generateClientProxyFunction(ply,"Luasool.print") or Luasool.print,
+			PrintTable=SERVER and Luasool.generateClientProxyFunction(ply,"Luasool.printTable") or Luasool.printTable,
+		}
+	end
+	-- Inserted at the start of every executed luasool to generate a closure.
+	function Luasool.generateInjectableHeader(ply)
+		local retVal="local Luasool=Luasool.currentInjectables\n"
+		-- This sets the injectables as a global object temporarily, which
+		--  the running script will immediately assign to a local value
+		--  to generate the closure.
+		-- After that the currentInjectables property can be reassigned.
+		Luasool.currentInjectables=Luasool.generateInjectables(ply)
+		for i,v in pairs(Luasool.currentInjectables)
+		do
+			retVal=retVal.."local "..i.."=Luasool[\""..i.."\"]\n"
+		end
+		return retVal
+	end
+	-- Prints or dispatches error message.
+	function Luasool.error(error,ply)
+		if SERVER
+		then
+			print("Luasool error from "..ply:GetName()..": "..err)
+			print(code:sub(1,LUASOOL_ERROR_SERVER_MAX_PRINT_LENGTH))
+			Luasool.generateClientProxyFunction(ply,"Luasool.printError")(error)
+		else
+			ErrorNoHalt("Luasool Error: "..error)
+			if #error > LUASOOL_ERROR_CLIENT_MAX_HINT_LENGTH
+			then
+				error=error:sub(1,LUASOOL_ERROR_CLIENT_MAX_HINT_LENGTH).."..."
+			end
+			WireLib.AddNotify(ply,"Error: "..error,NOTIFY_ERROR,3,NOTIFYSOUND_ERROR1)
+		end
+	end
+	-- Executes a provided luasool.
+	function Luasool.execute(code,ply)
+		if CLIENT and not ply then ply=LocalPlayer() end
+		if SERVER and not ply:IsAdmin()	then Luasool.sendError(ply,"Only admins can run code on the server!")
+		else
+			local fullCode=Luasool.generateInjectableHeader(ply)..code
+			local err=RunString(fullCode,"Luasool Execution",false)
+			if err then Luasool.error(ply,err) end
+		end
+	end
+
 	if CLIENT
 	then
 		include("luasool_editor.lua")
@@ -27,27 +79,15 @@ Luasool=(function()
 		-- Submits a luasool to server for execution.
 		-- TODO: Replace with chunk queue to handle large scripts.
 		function Luasool.runCodeOnServer(code)
-			if not code then code=Luasool.getActiveCode() end
 			net.Start(LUASOOL_NET_RUNCODE)
 			net.WriteString(code)
 			net.SendToServer()
 		end
 		-- Pretty print functions.
-		function Luasool.printError(err)
-			ErrorNoHalt("Luasool Error: "..err)
-			if #err > LUASOOL_ERROR_CLIENT_MAX_HINT_LENGTH
-			then
-				err=err:sub(1,LUASOOL_ERROR_CLIENT_MAX_HINT_LENGTH).."..."
-			end
-			WireLib.AddNotify(LocalPlayer(),"Error: "..err,NOTIFY_ERROR,3,NOTIFYSOUND_ERROR1)
-		end
 		function Luasool.print(...)
 			local args={...}
 			print(...)
-			for k,v in pairs(args)
-			do
-				chat.AddText(v)
-			end
+			for k,v in pairs(args) do chat.AddText(v) end
 		end
 		function Luasool.printTable(tab)
 			PrintTable(tab)
@@ -55,8 +95,11 @@ Luasool=(function()
 		end
 
 		net.Receive(LUASOOL_NET_OPENEDITOR,function() Luasool.openEditor() end)
-		net.Receive(LUASOOL_NET_RUNCODE,function() Luasool.runCodeOnServer() end)
-		net.Receive(LUASOOL_NET_ERROR,function() Luasool.printError(net.ReadString()) end)
+		net.Receive(LUASOOL_NET_RUNCODE,function()
+			local code=Luasool.getActiveCode()
+			if LocalPlayer():KeyDown(IN_SPEED) then Luasool.execute(code)
+			else Luasool.runCodeOnServer(code) end
+		end)
 		-- Receives client proxy requests from an actively-running luasool and executes it.
 		--  functionAddress refers to name of a globally-accessible function, by however
 		--  that variable is referenced from the global object.
@@ -85,58 +128,8 @@ Luasool=(function()
 	then
 		util.AddNetworkString(LUASOOL_NET_OPENEDITOR)
 		util.AddNetworkString(LUASOOL_NET_RUNCODE)
-		util.AddNetworkString(LUASOOL_NET_ERROR)
 		util.AddNetworkString(LUASOOL_NET_CLIENT_PROXY_CALL)
-		function Luasool.sendError(ply,error)
-			net.Start(LUASOOL_NET_ERROR)
-			net.WriteString(error)
-			net.Send(ply)
-		end
-		-- Handles a request from a player to execute a luasool.
-		net.Receive(LUASOOL_NET_RUNCODE,function(len,ply)
-			if not ply:IsAdmin()
-			then
-				Luasool.sendError(ply,"Only admins can run code on the server!")
-			else
-				local code=net.ReadString()
-				local fullCode=Luasool.generateInjectableHeader(ply)..code
-				local err=RunString(fullCode,"Luasool Execution",false)
-				if err
-				then
-					print("Luasool error from "..ply:GetName()..": "..err)
-					print(code:sub(1,LUASOOL_ERROR_SERVER_MAX_PRINT_LENGTH))
-					Luasool.sendError(ply,err)
-				end
-			end
-		end)
-		-- Generates a table of variables that executed luasools should have acccess to.
-		function Luasool.generateInjectables(ply)
-			local plyTrace=ply:GetEyeTrace()
-			-- NOTE: This is set as a globally-accessible variable, and is overwritten
-			--  by subsequent calls. Header code will create a file-local closure
-			--  for the luasool, at which point it is safe to generate a new batch
-			--  of injectables.
-			Luasool.currentInjectables={
-				trace=plyTrace,
-				player=ply,
-				this=plyTrace.Entity,
-				print=Luasool.generateClientProxyFunction(ply,"Luasool.print"),
-				serverPrint=print,
-				PrintTable=Luasool.generateClientProxyFunction(ply,"Luasool.printTable"),
-				ServerPrintTable=PrintTable
-			}
-			return Luasool.currentInjectables
-		end
-		-- Inserted at the start of every executed luasool to generate a closure.
-		function Luasool.generateInjectableHeader(ply)
-			local retVal="local Luasool=Luasool.currentInjectables\n"
-			local injectables=Luasool.generateInjectables(ply)
-			for i,v in pairs(injectables)
-			do
-				retVal=retVal.."local "..i.."=Luasool[\""..i.."\"]\n"
-			end
-			return retVal
-		end
+
 		-- Returns a function that, when called, delegates calling that function
 		--  to the client.
 		function Luasool.generateClientProxyFunction(ply,functionAddressableName)
@@ -148,6 +141,8 @@ Luasool=(function()
 				net.Send(ply)
 			end
 		end
+		-- Handles a request from a player to execute a luasool.
+		net.Receive(LUASOOL_NET_RUNCODE,function(len,ply) Luasool.execute(net.ReadString(),ply) end)
 	end
 	return Luasool
 end)()
