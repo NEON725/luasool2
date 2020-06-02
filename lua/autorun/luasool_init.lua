@@ -2,8 +2,9 @@ LUASOOL_NET_OPENEDITOR="luasool_openeditor"
 LUASOOL_NET_RUNCODE="luasool_runcode"
 LUASOOL_NET_CLIENT_PROXY_CALL="lua_client_proxy_call"
 LUASOOL_FILE_SCRIPT_DIR="luasool"
-LUASOOL_ERROR_SERVER_MAX_PRINT_LENGTH=200
-LUASOOL_ERROR_CLIENT_MAX_HINT_LENGTH=100
+
+local DEFAULT_FLAGS=FCVAR_ARCHIVE
+CreateConVar("luasool_error_client_max_hint_length",100,DEFAULT_FLAGS,"Maximum length of error printed to client popup hint.",0)
 
 Luasool=(function()
 	local Luasool={}
@@ -37,15 +38,12 @@ Luasool=(function()
 	function Luasool.error(error,ply)
 		if SERVER
 		then
-			print("Luasool error from "..ply:GetName()..": "..err)
-			print(code:sub(1,LUASOOL_ERROR_SERVER_MAX_PRINT_LENGTH))
+			print("Luasool error from "..ply:GetName()..": "..error)
 			Luasool.generateClientProxyFunction(ply,"Luasool.printError")(error)
 		else
 			ErrorNoHalt("Luasool Error: "..error)
-			if #error > LUASOOL_ERROR_CLIENT_MAX_HINT_LENGTH
-			then
-				error=error:sub(1,LUASOOL_ERROR_CLIENT_MAX_HINT_LENGTH).."..."
-			end
+			local maxHintLength=GetConVar("luasool_error_client_max_hint_length"):GetInt()
+			if #error > maxHintLength then error=error:sub(1,maxHintLength).."..." end
 			WireLib.AddNotify(ply,"Error: "..error,NOTIFY_ERROR,3,NOTIFYSOUND_ERROR1)
 		end
 	end
@@ -56,7 +54,7 @@ Luasool=(function()
 		else
 			local fullCode=Luasool.generateInjectableHeader(ply)..code
 			local err=RunString(fullCode,"Luasool Execution",false)
-			if err then Luasool.error(ply,err) end
+			if err then Luasool.error(err,ply) end
 		end
 	end
 
